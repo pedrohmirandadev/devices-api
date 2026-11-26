@@ -35,7 +35,7 @@ func New(name, brand string, state State, now time.Time) (*Device, error) {
 		return nil, err
 	}
 
-	now = now.UTC()
+	now = normalizeTime(now)
 
 	return &Device{
 		id:        uuid.Must(uuid.NewV7()),
@@ -109,7 +109,7 @@ func (d *Device) Update(c Changes, now time.Time) (changed bool, previous State,
 
 	previous = d.state
 	d.name, d.brand, d.state = name, brand, state
-	d.updatedAt = now.UTC()
+	d.updatedAt = normalizeTime(now)
 
 	return true, previous, nil
 }
@@ -143,6 +143,12 @@ func (d *Device) UpdatedAt() time.Time { return d.updatedAt }
 
 // Version returns the optimistic-locking version.
 func (d *Device) Version() int64 { return d.version }
+
+// normalizeTime stores times in UTC with microsecond precision, the precision of
+// PostgreSQL timestamps, so values read back from storage compare equal.
+func normalizeTime(t time.Time) time.Time {
+	return t.UTC().Truncate(time.Microsecond)
+}
 
 func validate(name, brand string, state State) error {
 	if !validText(name) {

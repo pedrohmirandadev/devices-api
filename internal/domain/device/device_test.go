@@ -47,6 +47,12 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, device.StateInUse, d.State())
 	})
 
+	t.Run("truncates time to microseconds", func(t *testing.T) {
+		d, err := device.New("Pixel", "Google", "", now.Add(1500*time.Nanosecond))
+		require.NoError(t, err)
+		assert.Equal(t, now.UTC().Add(time.Microsecond), d.CreatedAt())
+	})
+
 	tests := map[string]struct {
 		name, brand string
 		state       device.State
