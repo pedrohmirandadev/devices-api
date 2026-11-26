@@ -348,10 +348,20 @@ func TestDeleteDevice(t *testing.T) {
 }
 
 func TestIfMatchVersion(t *testing.T) {
-	for header, want := range map[string]*int64{"": nil, "*": nil, " 5 ": ptr(int64(5)), `"6"`: ptr(int64(6)), `W/"7"`: ptr(int64(7))} {
-		got, err := ifMatchVersion(header)
-		require.NoError(t, err, header)
-		assert.Equal(t, want, got, header)
+	tests := []struct {
+		header string
+		want   *int64
+	}{
+		{"", nil},
+		{"*", nil},
+		{" 5 ", ptr(int64(5))},
+		{`"6"`, ptr(int64(6))},
+		{`W/"7"`, ptr(int64(7))},
+	}
+	for _, tc := range tests {
+		got, err := ifMatchVersion(tc.header)
+		require.NoError(t, err, tc.header)
+		assert.Equal(t, tc.want, got, tc.header)
 	}
 
 	_, err := ifMatchVersion(`"v1"`)
