@@ -67,20 +67,33 @@ func TestStateChangesClosesOnShutdown(t *testing.T) {
 	assert.Equal(t, websocket.StatusGoingAway, websocket.CloseStatus(err))
 }
 
-func TestStateChangesKeepAlive(t *testing.T) {
-	e := newEnv(t, func(d *Dependencies) {
+func keepAliveEnv(t *testing.T) *env {
+	t.Helper()
+
+	return newEnv(t, func(d *Dependencies) {
 		d.PingInterval = 10 * time.Millisecond
 		d.RequestTimeout = 50 * time.Millisecond
 	})
-	conn, _ := dialStateChanges(t, e)
+}
 
-	// While the client reads, pings are answered and the connection stays open.
-	readCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, _, err := conn.Read(readCtx)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+func TestStateChangesKeepAliveWithResponsiveClient(t *testing.T) {
+	e := keepAliveEnv(t)
+	conn, ctx := dialStateChanges(t, e)
 
-	// Once the client stops reading, pongs stop and the server drops the connection.
+	// CloseRead keeps reading in the background, so pings are answered.
+	conn.CloseRead(ctx)
+
+	select {
+	case <-e.sub.canceled:
+		t.Fatal("responsive client was disconnected")
+	case <-time.After(150 * time.Millisecond): // many ping intervals
+	}
+}
+
+func TestStateChangesDropsUnresponsiveClient(t *testing.T) {
+	e := keepAliveEnv(t)
+	dialStateChanges(t, e) // never reads, so never answers pings
+
 	select {
 	case <-e.sub.canceled:
 	case <-time.After(3 * time.Second):
