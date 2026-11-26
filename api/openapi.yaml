@@ -1,0 +1,344 @@
+openapi: 3.0.3
+info:
+  title: Devices API
+  version: 1.0.0
+  description: |
+    REST API to persist and manage device resources.
+
+    **Domain rules**
+    - The creation time (`created_at`) cannot be updated.
+    - `name` and `brand` cannot be updated while the device is `in-use`.
+    - `in-use` devices cannot be deleted.
+    - State change notifications are sent over WebSocket only after the change is persisted.
+
+    **Optimistic concurrency**: every device has a `version`, also returned as the `ETag`
+    header. Send `If-Match: "<version>"` on `PUT`, `PATCH` or `DELETE` to make sure you are
+    changing the version you last read. Otherwise you get `412 Precondition Failed`.
+
+    **Errors** use RFC 7807 `application/problem+json` bodies.
+
+    **Notifications**: connect a WebSocket client to `GET /ws/devices/state-changes` to get a
+    `StateChangedEvent` JSON message every time a device changes state.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Devices
+  - name: Notifications
+  - name: Operations
+paths:
+  /api/v1/devices:
+    post:
+      tags: [Devices]
+      summary: Create a device
+      operationId: createDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDeviceRequest' }
+            example: { name: iPhone 16, brand: Apple, state: available }
+      responses:
+        '201':
+          description: Device created
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    get:
+      tags: [Devices]
+      summary: List devices
+      description: |
+        Returns devices from newest to oldest. Filters can be combined. Without filters this
+        fetches all devices (paginated).
+      operationId: listDevices
+      parameters:
+        - name: brand
+          in: query
+          description: Filter by brand (case-insensitive exact match).
+          schema: { type: string }
+        - name: state
+          in: query
+          description: Filter by state.
+          schema: { $ref: '#/components/schemas/State' }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: A page of devices
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/devices/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Devices]
+      summary: Fetch a single device
+      operationId: getDevice
+      responses:
+        '200':
+          description: The device
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [Devices]
+      summary: Fully update a device
+      description: |
+        `name`, `brand` and `state` are required. `created_at` may be sent but must equal the
+        stored value. `id`, `updated_at` and `version` are read-only and ignored.
+      operationId: replaceDevice
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceDeviceRequest' }
+            example: { name: iPhone 16 Pro, brand: Apple, state: in-use }
+      responses:
+        '200': { $ref: '#/components/responses/DeviceUpdated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [Devices]
+      summary: Partially update a device
+      description: Only the fields sent are changed. A `null` field is treated as not sent.
+      operationId: updateDevice
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateDeviceRequest' }
+            example: { state: in-use }
+      responses:
+        '200': { $ref: '#/components/responses/DeviceUpdated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [Devices]
+      summary: Delete a device
+      description: In-use devices cannot be deleted (409).
+      operationId: deleteDevice
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Device deleted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /ws/devices/state-changes:
+    get:
+      tags: [Notifications]
+      summary: Subscribe to device state changes (WebSocket)
+      description: |
+        Upgrades to a WebSocket. The server pushes one `StateChangedEvent` text message (JSON)
+        for every persisted state change. Messages from the client are ignored. Missed events
+        are not replayed after a disconnect. Browser clients must be served from the same
+        origin.
+      operationId: subscribeStateChanges
+      responses:
+        '101':
+          description: Switching protocols. Messages follow the StateChangedEvent schema.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StateChangedEvent' }
+        '426': { description: Upgrade required (not a WebSocket request) }
+  /healthz:
+    get:
+      tags: [Operations]
+      summary: Liveness probe
+      responses:
+        '200':
+          description: The process is alive
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+  /readyz:
+    get:
+      tags: [Operations]
+      summary: Readiness probe (checks the database)
+      responses:
+        '200':
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: Database unreachable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+  /metrics:
+    get:
+      tags: [Operations]
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: Metrics in the Prometheus text format
+          content:
+            text/plain: { schema: { type: string } }
+components:
+  headers:
+    ETag:
+      description: Current version of the device, e.g. `"3"`.
+      schema: { type: string }
+    Location:
+      description: URL of the created device.
+      schema: { type: string }
+  parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Expected current version (`"3"`, `3`, `W/"3"` or `*`).
+      schema: { type: string }
+  responses:
+    DeviceUpdated:
+      description: The updated device
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Device' }
+    BadRequest:
+      description: Malformed request (invalid JSON, unknown field, invalid id or query parameter)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Device not found
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: |
+        Business rule violation (device in use) or concurrent modification
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PreconditionFailed:
+      description: If-Match does not match the current version
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unprocessable:
+      description: Validation failed
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    InternalError:
+      description: Unexpected error
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    State:
+      type: string
+      enum: [available, in-use, inactive]
+    Device:
+      type: object
+      required: [id, name, brand, state, created_at, updated_at, version]
+      properties:
+        id: { type: string, format: uuid, example: 0193a4b2-7c1e-7d4a-9f2b-1c2d3e4f5a6b }
+        name: { type: string, example: iPhone 16 }
+        brand: { type: string, example: Apple }
+        state: { $ref: '#/components/schemas/State' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, format: int64, example: 1 }
+    DeviceList:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Device' }
+        total: { type: integer, description: Number of devices matching the filters }
+        limit: { type: integer }
+        offset: { type: integer }
+    CreateDeviceRequest:
+      type: object
+      additionalProperties: false
+      required: [name, brand]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        brand: { type: string, minLength: 1, maxLength: 255 }
+        state:
+          allOf: [{ $ref: '#/components/schemas/State' }]
+          default: available
+    ReplaceDeviceRequest:
+      type: object
+      required: [name, brand, state]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        brand: { type: string, minLength: 1, maxLength: 255 }
+        state: { $ref: '#/components/schemas/State' }
+        created_at:
+          type: string
+          format: date-time
+          description: Optional; must equal the stored creation time.
+    UpdateDeviceRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        brand: { type: string, minLength: 1, maxLength: 255 }
+        state: { $ref: '#/components/schemas/State' }
+        created_at:
+          type: string
+          format: date-time
+          description: Optional; must equal the stored creation time.
+    StateChangedEvent:
+      type: object
+      required: [type, device_id, previous_state, new_state, occurred_at]
+      properties:
+        type: { type: string, enum: [device.state_changed] }
+        device_id: { type: string, format: uuid }
+        previous_state: { $ref: '#/components/schemas/State' }
+        new_state: { $ref: '#/components/schemas/State' }
+        occurred_at: { type: string, format: date-time }
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+    Problem:
+      type: object
+      description: RFC 7807 problem details
+      properties:
+        type: { type: string, example: about:blank }
+        title: { type: string, example: Conflict }
+        status: { type: integer, example: 409 }
+        detail: { type: string, example: in-use devices cannot be deleted }
+        instance: { type: string, example: /api/v1/devices/0193a4b2-7c1e-7d4a-9f2b-1c2d3e4f5a6b }
