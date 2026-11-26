@@ -31,9 +31,10 @@ type CreateInput struct {
 // UpdateInput is the input of the Update use case. Nil fields are not changed,
 // which lets a single use case serve both full (PUT) and partial (PATCH) updates.
 type UpdateInput struct {
-	Name  *string
-	Brand *string
-	State *string
+	Name      *string
+	Brand     *string
+	State     *string
+	CreatedAt *time.Time
 	// ExpectedVersion, when set, must match the current version (If-Match).
 	ExpectedVersion *int64
 }
@@ -126,7 +127,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*de
 		return nil, err
 	}
 
-	changes := device.Changes{Name: in.Name, Brand: in.Brand}
+	changes := device.Changes{Name: in.Name, Brand: in.Brand, CreatedAt: in.CreatedAt}
 	if in.State != nil {
 		st := device.State(*in.State)
 		changes.State = &st

@@ -262,6 +262,16 @@ func TestUpdate(t *testing.T) {
 		assert.Zero(t, f.repo.updates)
 	})
 
+	t.Run("creation time cannot change", func(t *testing.T) {
+		f := newFixture()
+		d := f.seed(t, device.StateAvailable)
+
+		_, err := f.svc.Update(ctx, d.ID(), app.UpdateInput{CreatedAt: ptr(fixedT)})
+
+		require.ErrorIs(t, err, device.ErrCreationTimeImmutable)
+		assert.Zero(t, f.repo.updates)
+	})
+
 	t.Run("not found", func(t *testing.T) {
 		_, err := newFixture().svc.Update(ctx, uuid.New(), app.UpdateInput{})
 		assert.ErrorIs(t, err, device.ErrNotFound)

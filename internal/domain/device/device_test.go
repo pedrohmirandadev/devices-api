@@ -183,6 +183,18 @@ func TestUpdate(t *testing.T) {
 	})
 }
 
+func TestUpdateCreationTime(t *testing.T) {
+	d := newDevice(t, device.StateAvailable)
+
+	_, _, err := d.Update(device.Changes{CreatedAt: ptr(now.Add(time.Second))}, now)
+	require.ErrorIs(t, err, device.ErrCreationTimeImmutable)
+
+	changed, _, err := d.Update(device.Changes{CreatedAt: ptr(now), Name: ptr("New")}, now)
+	require.NoError(t, err, "echoing the same creation time is allowed")
+	assert.True(t, changed)
+	assert.Equal(t, now.UTC(), d.CreatedAt())
+}
+
 func TestEnsureDeletable(t *testing.T) {
 	assert.NoError(t, newDevice(t, device.StateAvailable).EnsureDeletable())
 	assert.NoError(t, newDevice(t, device.StateInactive).EnsureDeletable())

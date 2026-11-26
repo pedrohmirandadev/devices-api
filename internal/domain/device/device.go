@@ -67,15 +67,23 @@ type Changes struct {
 	Name  *string
 	Brand *string
 	State *State
+	// CreatedAt may be echoed back by clients (e.g. GET-modify-PUT), but it
+	// must match the stored value: the creation time can never be updated.
+	CreatedAt *time.Time
 }
 
 // Update applies the changes while enforcing the domain rules:
+//   - the creation time cannot be updated;
 //   - name and brand cannot change while the device is currently in use;
 //   - all resulting values must be valid.
 //
 // It reports whether anything changed and, if the state changed, the previous
 // state so the caller can emit a StateChanged event once the change is persisted.
 func (d *Device) Update(c Changes, now time.Time) (changed bool, previous State, err error) {
+	if c.CreatedAt != nil && !c.CreatedAt.Equal(d.createdAt) {
+		return false, "", ErrCreationTimeImmutable
+	}
+
 	name, brand, state := d.name, d.brand, d.state
 	if c.Name != nil {
 		name = strings.TrimSpace(*c.Name)
