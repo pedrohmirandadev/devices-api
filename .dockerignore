@@ -1,0 +1,10 @@
+.git
+.github
+bin
+coverage.out
+coverage.html
+*.md
+Makefile
+scripts
+**/*_test.go
+internal/testutil
